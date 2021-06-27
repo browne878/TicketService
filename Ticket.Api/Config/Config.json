@@ -1,0 +1,34 @@
+{
+  "TicketConfig": {
+    "AdminRole": 815355998935842827,
+    "PveAdminRole": 824822360053645324,
+    "SupportRole": 815356034415329280,
+    "PaypalLink": "http://paypal.me/BloodyArkTeam",
+    "TicketCreateChannel": 853665573854511155,
+    "TicketLimitPerUser": 2,
+    "TicketLogChannel": 856489406680530944,
+    "TicketUrl": "http://transcript.bloody-ark.com/logs/",
+    "TicketCategories": {
+      "Creating": 856488796261711882,
+      "Hitlist": 856488810031874069,
+      "Pve": 856488822778232833,
+      "Admin": 856488839178878976,
+      "Restarter": 856488851055575061,
+      "OrpPve": 856488867027877918,
+      "RuleBreak": 856488880052502550,
+      "Account": 856488942319697950,
+      "Highlights": 856488953975799848,
+      "Vote": 856488966021840907,
+      "Other": 856488981436825613
+    }
+  },
+  "MySql": [
+    {
+      "MySqlHost": "85.190.148.82",
+      "MySqlUser": "browne",
+      "MySqlPass": "pjasdh(730)",
+      "MySqlDb": "arkdbpve",
+      "MySqlPort": 3306
+    }
+  ]
+}
