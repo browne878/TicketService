@@ -11,45 +11,42 @@
     using DSharpPlus.EventArgs;
     using DSharpPlus.Interactivity;
     using DSharpPlus.Interactivity.Extensions;
-    using Newtonsoft.Json;
+    using Ticket.Core;
     using Ticket.Core.Entities;
     using Ticket.Services.Services.BotService.Events;
 
-    public class TicketChannelLogic : TicketChannel
+    public class TicketChannelLogic
     {
-
-        [JsonIgnore]
+        
         private readonly Config config;
-
-        [JsonIgnore]
         private readonly EventManager eventManager;
-
-        [JsonIgnore]
         private readonly InteractivityExtension interactivity;
-
-        [JsonIgnore]
         private readonly DiscordUser owner;
-
-        [JsonIgnore]
         private readonly DiscordGuild server;
-
-        [JsonIgnore]
         private readonly DiscordChannel channel;
+        private readonly IUnitOfWork unitOfWork;
+        private readonly TicketChannel ticket;
 
-        public TicketChannelLogic(DiscordUser _owner, DiscordClient _bot, DiscordGuild _server,
-                             Config _config, EventManager _eventManager, FileReaderService _fileService)
+        public TicketChannelLogic(DiscordUser _owner, DiscordClient _bot, DiscordGuild _server, IUnitOfWork _unitOfWork,
+        Config _config, EventManager _eventManager, TicketChannel _ticket)
         {
             owner = _owner;
-            TicketComplete = false;
+            ticket.TicketComplete = false;
             server = _server;
+            unitOfWork = _unitOfWork;
             config = _config;
             eventManager = _eventManager;
-            fileService = _fileService;
+            ticket = _ticket;
             interactivity = _bot.GetInteractivity();
             channel = Task.WhenAll(CreateTicket()).Result[0];
         }
 
-        private int SetTicketId() => (int)dbManager.ObjectQuery($"SELECT * FROM discord_tickets ORDER BY ID DESC LIMIT 1 WHERE ID = {owner.Id}");
+        private async Task SetTicketId()
+        {
+            TicketChannel previous = await unitOfWork.TicketRepository.GetTicketIdAsync();
+
+            ticket.TicketId = previous.TicketId + 1;
+        }
 
         private async Task<List<DiscordOverwriteBuilder>> SetChannelPermissions()
         {
@@ -84,14 +81,14 @@
         private async Task<DiscordChannel> CreateTicket()
         {
 
-            TicketId = SetTicketId();
+            await SetTicketId();
             List<DiscordOverwriteBuilder> channelPermissions = await SetChannelPermissions();
-            TicketName = new List<string> { "ticket", $"{TicketId}" };
+            ticket.TicketName = new List<string> { "ticket", $"{ticket.TicketId}" };
             DiscordChannel category = server.GetChannel(config.TicketConfig.TicketCategories.Creating);
-            TicketCategory = category.Name;
-            CreatedAt = DateTime.Now;
+            ticket.TicketCategory = category.Name;
+            ticket.CreatedAt = DateTime.Now;
 
-            DiscordChannel discordChannel = await server.CreateChannelAsync($"{TicketName[0]}-{TicketName[1]}", ChannelType.Text, category, overwrites: channelPermissions);
+            DiscordChannel discordChannel = await server.CreateChannelAsync($"{ticket.TicketName[0]}-{ticket.TicketName[1]}", ChannelType.Text, category, overwrites: channelPermissions);
 
             DiscordEmbedBuilder welcomeEmbed = new()
             {
@@ -124,13 +121,13 @@
                 Embed = welcomeEmbed
             };
 
-            welcomeBuilder.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Close", "Close"));
+            welcomeBuilder.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Close", "Close"));
 
             await discordChannel.SendMessageAsync(welcomeBuilder);
 
             eventManager.TicketCreated.Invoke(this, new TicketCreatedEventArgs()
             {
-                Ticket = this
+                Ticket = ticket
             });
 
             return discordChannel;
@@ -138,19 +135,19 @@
 
         private async Task<bool> GetSteamId()
         {
-            SteamId = (ulong)dbManager.ObjectQuery($"SELECT steamid FROM discord_vote_rewards WHERE discordid = {owner.Id}");
+            ticket.SteamId = ulong.Parse(await unitOfWork.TicketRepository.GetSteamID(ticket.TicketOwner));
 
-            if (SteamId != 0)
+            if (ticket.SteamId != 0)
             {
                 DiscordMessageBuilder confirmId = new();
                 confirmId.WithEmbed(new DiscordEmbedBuilder()
                 {
                     Color = DiscordColor.Red,
                     Title = "Is this the correct Steam ID?",
-                    Description = $"{SteamId}"
+                    Description = $"{ticket.SteamId}"
                 });
-                confirmId.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{TicketId}-SteamID-Yes", "YES"));
-                confirmId.AddComponents(new DiscordButtonComponent(ButtonStyle.Danger, $"{TicketId}-SteamID-No", "No"));
+                confirmId.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{ticket.TicketId}-SteamID-Yes", "YES"));
+                confirmId.AddComponents(new DiscordButtonComponent(ButtonStyle.Danger, $"{ticket.TicketId}-SteamID-No", "No"));
 
                 DiscordMessage confirmIdMessage = await channel.SendMessageAsync(confirmId);
 
@@ -160,12 +157,12 @@
                 {
                     eventManager.TicketTimeout.Invoke(this, new TicketTimeoutEventArgs
                     {
-                        TicketChannel = this
+                        TicketChannel = ticket
                     });
                     return false;
                 }
 
-                if (btnComplete.Result.Id == $"{TicketId}-SteamID-Yes")
+                if (btnComplete.Result.Id == $"{ticket.TicketId}-SteamID-Yes")
                 {
                     return true;
                 }
@@ -229,7 +226,7 @@
                     case true:
                         eventManager.TicketTimeout.Invoke(this, new TicketTimeoutEventArgs
                         {
-                            TicketChannel = this
+                            TicketChannel = ticket
                         });
                         return false;
                 }
@@ -258,7 +255,7 @@
                 {
                     //successfully retrieved a steamID
                     await channel.SendMessageAsync("Thank You!");
-                    SteamId = ulong.Parse(userResponse.Result.Content);
+                    ticket.SteamId = ulong.Parse(userResponse.Result.Content);
                     return true;
                 }
 
@@ -276,8 +273,8 @@
                 Title = "Is your issue ingame or not ingame?"
             });
 
-            issue.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Issue-Yes", "Ingame Issue"));
-            issue.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Issue-No", "Not Ingame Issue"));
+            issue.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Issue-Yes", "Ingame Issue"));
+            issue.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Issue-No", "Not Ingame Issue"));
 
             DiscordMessage issueMessage = await channel.SendMessageAsync(issue);
 
@@ -287,19 +284,19 @@
             {
                 eventManager.TicketTimeout.Invoke(this, new TicketTimeoutEventArgs
                 {
-                    TicketChannel = this
+                    TicketChannel = ticket
                 });
                 return false;
             }
 
-            if (issueResponse.Result.Id == $"{TicketId}-Issue-Yes")
+            if (issueResponse.Result.Id == $"{ticket.TicketId}-Issue-Yes")
             {
-                IngameIssue = true;
+                ticket.IngameIssue = true;
                 return true;
             }
 
-            if (issueResponse.Result.Id != $"{TicketId}-Issue-No") return false;
-            IngameIssue = false;
+            if (issueResponse.Result.Id != $"{ticket.TicketId}-Issue-No") return false;
+            ticket.IngameIssue = false;
             return true;
         }
 
@@ -313,9 +310,9 @@
                 Title = "What cluster is your issue on?"
             });
 
-            cluster.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Cluster-PVPVE", "PVPVE"));
-            cluster.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Cluster-PVP", "PVP"));
-            cluster.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Cluster-PVE", "PVE"));
+            cluster.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Cluster-PVPVE", "PVPVE"));
+            cluster.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Cluster-PVP", "PVP"));
+            cluster.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Cluster-PVE", "PVE"));
 
             DiscordMessage clusterMessage = await channel.SendMessageAsync(cluster);
 
@@ -325,25 +322,25 @@
             {
                 eventManager.TicketTimeout.Invoke(this, new TicketTimeoutEventArgs
                 {
-                    TicketChannel = this
+                    TicketChannel = ticket
                 });
                 return false;
             }
 
-            if (clusterResponse.Result.Id == $"{TicketId}-Cluster-PVPVE")
+            if (clusterResponse.Result.Id == $"{ticket.TicketId}-Cluster-PVPVE")
             {
-                Cluster = "PVPVE";
+                ticket.Cluster = "PVPVE";
                 return true;
             }
 
-            if (clusterResponse.Result.Id == $"{TicketId}-Cluster-PVP")
+            if (clusterResponse.Result.Id == $"{ticket.TicketId}-Cluster-PVP")
             {
-                Cluster = "PVP";
+                ticket.Cluster = "PVP";
                 return true;
             }
 
-            if (clusterResponse.Result.Id != $"{TicketId}-Cluster-PVE") return false;
-            Cluster = "PVE";
+            if (clusterResponse.Result.Id != $"{ticket.TicketId}-Cluster-PVE") return false;
+            ticket.Cluster = "PVE";
             return true;
         }
 
@@ -357,16 +354,16 @@
                 Title = "What map is your issue on?"
             });
 
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Island", "Island"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Scorched_Earth", "Scorched Earth"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Aberration", "Aberration"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-The_Center", "The Center"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Ragnarok", "Ragnarok"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Extinction", "Extinction"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Valguero", "Valguero"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Genesis_1", "Genesis 1"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Crystal_Isles", "Crystal Isles"));
-            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Map-Genesis_2", "Genesis 2"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Island", "Island"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Scorched_Earth", "Scorched Earth"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Aberration", "Aberration"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-The_Center", "The Center"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Ragnarok", "Ragnarok"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Extinction", "Extinction"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Valguero", "Valguero"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Genesis_1", "Genesis 1"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Crystal_Isles", "Crystal Isles"));
+            map.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Map-Genesis_2", "Genesis 2"));
 
             DiscordMessage mapMessage = await channel.SendMessageAsync(map);
 
@@ -376,67 +373,67 @@
             {
                 eventManager.TicketTimeout.Invoke(this, new TicketTimeoutEventArgs
                 {
-                    TicketChannel = this
+                    TicketChannel = ticket
                 });
                 return false;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-Island")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-Island")
             {
-                Map = "Island";
+                ticket.Map = "Island";
                 return true;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-Scorched_Earth")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-Scorched_Earth")
             {
-                Map = "Scorched Earth";
+                ticket.Map = "Scorched Earth";
                 return true;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-Aberration")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-Aberration")
             {
-                Map = "Aberration";
+                ticket.Map = "Aberration";
                 return true;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-The_Center")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-The_Center")
             {
-                Map = "The Center";
+                ticket.Map = "The Center";
                 return true;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-Ragnarok")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-Ragnarok")
             {
-                Map = "Ragnarok";
+                ticket.Map = "Ragnarok";
                 return true;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-Extinction")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-Extinction")
             {
-                Map = "Extinction";
+                ticket.Map = "Extinction";
                 return true;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-Valguero")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-Valguero")
             {
-                Map = "Valguero";
+                ticket.Map = "Valguero";
                 return true;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-Genesis_1")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-Genesis_1")
             {
-                Map = "Genesis 1";
+                ticket.Map = "Genesis 1";
                 return true;
             }
 
-            if (mapResponse.Result.Id == $"{TicketId}-Map-Crystal_Isles")
+            if (mapResponse.Result.Id == $"{ticket.TicketId}-Map-Crystal_Isles")
             {
-                Map = "Crystal Isles";
+                ticket.Map = "Crystal Isles";
                 return true;
             }
 
-            if (mapResponse.Result.Id != $"{TicketId}-Map-Genesis_2") return false;
-            Map = "Genesis 2";
+            if (mapResponse.Result.Id != $"{ticket.TicketId}-Map-Genesis_2") return false;
+            ticket.Map = "Genesis 2";
             return true;
         }
 
@@ -450,13 +447,13 @@
                 Title = "What category of issue do you have?"
             });
 
-            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Category-Hitlist", "Hitlist"));
-            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Category-Orp_Pve", "Orp or Pve"));
-            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Category-Rule_Breaks", "Rule Breaks"));
-            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Category-Account", "Account"));
-            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Category-Highlights", "Highlights"));
-            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Category-Vote", "Vote"));
-            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{TicketId}-Category-Other", "Other"));
+            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Category-Hitlist", "Hitlist"));
+            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Category-Orp_Pve", "Orp or Pve"));
+            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Category-Rule_Breaks", "Rule Breaks"));
+            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Category-Account", "Account"));
+            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Category-Highlights", "Highlights"));
+            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Category-Vote", "Vote"));
+            category.AddComponents(new DiscordButtonComponent(ButtonStyle.Primary, $"{ticket.TicketId}-Category-Other", "Other"));
 
             DiscordMessage categoryMessage = await channel.SendMessageAsync(category);
 
@@ -466,49 +463,49 @@
             {
                 eventManager.TicketTimeout.Invoke(this, new TicketTimeoutEventArgs
                 {
-                    TicketChannel = this
+                    TicketChannel = ticket
                 });
                 return false;
             }
 
-            if (categoryResponse.Result.Id == $"{TicketId}-Category-Hitlist")
+            if (categoryResponse.Result.Id == $"{ticket.TicketId}-Category-Hitlist")
             {
-                TicketCategory = "Hitlist";
+                ticket.TicketCategory = "Hitlist";
                 return true;
             }
 
-            if (categoryResponse.Result.Id == $"{TicketId}-Category-Orp_Pve")
+            if (categoryResponse.Result.Id == $"{ticket.TicketId}-Category-Orp_Pve")
             {
-                TicketCategory = "Orp or Pve";
+                ticket.TicketCategory = "Orp or Pve";
                 return true;
             }
 
-            if (categoryResponse.Result.Id == $"{TicketId}-Category-Rule_Breaks")
+            if (categoryResponse.Result.Id == $"{ticket.TicketId}-Category-Rule_Breaks")
             {
-                TicketCategory = "Rule Breaks";
+                ticket.TicketCategory = "Rule Breaks";
                 return true;
             }
 
-            if (categoryResponse.Result.Id == $"{TicketId}-Category-Account")
+            if (categoryResponse.Result.Id == $"{ticket.TicketId}-Category-Account")
             {
-                TicketCategory = "Account";
+                ticket.TicketCategory = "Account";
                 return true;
             }
 
-            if (categoryResponse.Result.Id == $"{TicketId}-Category-Highlights")
+            if (categoryResponse.Result.Id == $"{ticket.TicketId}-Category-Highlights")
             {
-                TicketCategory = "Highlights";
+                ticket.TicketCategory = "Highlights";
                 return true;
             }
 
-            if (categoryResponse.Result.Id == $"{TicketId}-Category-Vote")
+            if (categoryResponse.Result.Id == $"{ticket.TicketId}-Category-Vote")
             {
-                TicketCategory = "Vote";
+                ticket.TicketCategory = "Vote";
                 return true;
             }
 
-            if (categoryResponse.Result.Id != $"{TicketId}-Category-Other") return false;
-            TicketCategory = "Other";
+            if (categoryResponse.Result.Id != $"{ticket.TicketId}-Category-Other") return false;
+            ticket.TicketCategory = "Other";
             return true;
         }
 
@@ -547,19 +544,19 @@
                         Description = "Would you like to continue with this request?"
                     });
 
-                    timeout.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{TicketId}-CCC-Timeout-Yes", "Yes"));
-                    timeout.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{TicketId}-CCC-Timeout-No", "No"));
+                    timeout.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{ticket.TicketId}-CCC-Timeout-Yes", "Yes"));
+                    timeout.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{ticket.TicketId}-CCC-Timeout-No", "No"));
 
                     DiscordMessage timeoutConfirmMessage = await channel.SendMessageAsync(timeout);
 
                     InteractivityResult<ComponentInteractionCreateEventArgs> timeoutConfirmResult = await timeoutConfirmMessage.WaitForButtonAsync(owner, TimeSpan.FromMinutes(5));
 
                     //Checks User reaction
-                    if (timeoutConfirmResult.TimedOut || timeoutConfirmResult.Result.Id == $"{TicketId}-CCC-Timeout-No")
+                    if (timeoutConfirmResult.TimedOut || timeoutConfirmResult.Result.Id == $"{ticket.TicketId}-CCC-Timeout-No")
                     {
                         eventManager.TicketTimeout.Invoke(this, new TicketTimeoutEventArgs
                         {
-                            TicketChannel = this
+                            TicketChannel = ticket
                         });
                         return false;
                     }
@@ -581,7 +578,7 @@
                         }
                         else
                         {
-                            HitlistCcc = string.Join(" ", cords);
+                            ticket.HitlistCcc = string.Join(" ", cords);
                             return true;
                         }
                     }
@@ -601,8 +598,8 @@
                 Title = "Did you Wipe the previous Hitlist Tribe?"
             });
 
-            wipe.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{TicketId}-Wipe-Yes", "Yes"));
-            wipe.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{TicketId}-Wipe-No", "No"));
+            wipe.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{ticket.TicketId}-Wipe-Yes", "Yes"));
+            wipe.AddComponents(new DiscordButtonComponent(ButtonStyle.Success, $"{ticket.TicketId}-Wipe-No", "No"));
 
             DiscordMessage wipeMessage = await channel.SendMessageAsync(wipe);
 
@@ -612,32 +609,29 @@
             {
                 eventManager.TicketTimeout.Invoke(this, new TicketTimeoutEventArgs
                 {
-                    TicketChannel = this
+                    TicketChannel = ticket
                 });
                 return false;
             }
 
-            if (wipeResult.Result.Id == $"{TicketId}-Wipe-Yes")
+            if (wipeResult.Result.Id == $"{ticket.TicketId}-Wipe-Yes")
             {
-                HitlistWipe = true;
+                ticket.HitlistWipe = true;
                 return true;
             }
 
-            if (wipeResult.Result.Id != $"{TicketId}-Wipe-No") return false;
-            HitlistWipe = false;
+            if (wipeResult.Result.Id != $"{ticket.TicketId}-Wipe-No") return false;
+            ticket.HitlistWipe = false;
             return true;
         }
 
         private async Task TicketCompleted()
         {
-            int ingameIssue = IngameIssue ? 1 : 0;
+            int ingameIssue = ticket.IngameIssue ? 1 : 0;
 
             dbManager.VoidQuery($"INSERT INTO discord_tickets(ID,ChannelID,UserID,SteamID,CreatedAt,Closed,InGameIssue,Cluster,Issue)" +
                                 $"VALUES ('{TicketId}','{channel.Id}','{owner.Id}',{SteamId}','{CreatedAt:yyyy/MM/dd HH:MM:ss}',0,{ingameIssue},'{Cluster}','{TicketCategory}')");
-
-            TicketLog tickets = fileService.GetTicketLog();
-            tickets.ActiveTickets.Add(this);
-            fileService.SaveTicketLog(tickets);
+            
 
             IEnumerable<DiscordMessage> messages = await channel.GetMessagesAsync();
             messages.ToList().RemoveAt(messages.Count());
@@ -673,7 +667,7 @@
 
         private async Task<string> GenerateURL()
         {
-            Random random = new Random();
+            Random random = new();
 
             List<char> letters = new()
             {
@@ -815,11 +809,11 @@
             };
 
             ticketLogEmbed.AddField("Ticket Owner", $"{owner.Username}#{owner.Discriminator}", true);
-            ticketLogEmbed.AddField("Steam ID", $"{SteamId}", true);
-            ticketLogEmbed.AddField("Issue", $"{IngameIssue} - {Cluster} - {TicketCategory}", true);
-            ticketLogEmbed.AddField("Created At", $"{CreatedAt}", true);
-            ticketLogEmbed.AddField("Closed At", $"{ClosedAt}", true);
-            ticketLogEmbed.AddField("Closed By", $"{ClosedBy.Username}", true);
+            ticketLogEmbed.AddField("Steam ID", $"{ticket.SteamId}", true);
+            ticketLogEmbed.AddField("Issue", $"{ticket.IngameIssue} - {ticket.Cluster} - {ticket.TicketCategory}", true);
+            ticketLogEmbed.AddField("Created At", $"{ticket.CreatedAt}", true);
+            ticketLogEmbed.AddField("Closed At", $"{ticket.ClosedAt}", true);
+            ticketLogEmbed.AddField("Closed By", $"{owner.Username}", true);
 
             DiscordMessageBuilder ticketLogMessage = new()
             {
@@ -844,7 +838,7 @@
                 return false;
             }
 
-            if (IngameIssue)
+            if (ticket.IngameIssue)
             {
                 if (!await GetCluster())
                 {
@@ -865,7 +859,7 @@
                 return false;
             }
 
-            if (TicketCategory == "Hitlist")
+            if (ticket.TicketCategory == "Hitlist")
             {
                 if (!await HitlistCords())
                 {
@@ -891,8 +885,8 @@
 
             await channel.AddOverwriteAsync(member, Permissions.None, Permissions.SendMessages);
 
-            DiscordButtonComponent yes = new(ButtonStyle.Success, $"{TicketId}-Close-Yes", "Yes");
-            DiscordButtonComponent no = new(ButtonStyle.Danger, $"{TicketId}-Close-No", "No");
+            DiscordButtonComponent yes = new(ButtonStyle.Success, $"{ticket.TicketId}-Close-Yes", "Yes");
+            DiscordButtonComponent no = new(ButtonStyle.Danger, $"{ticket.TicketId}-Close-No", "No");
 
             DiscordMessageBuilder confirm = new()
             {
@@ -918,20 +912,16 @@
 
             switch (result.Result.Id)
             {
-                case var x when x == $"{TicketId}-Close-Yes":
+                case var x when x == $"{ticket.TicketId}-Close-Yes":
 
                     await confirmMessage.DeleteAsync("Ticket Closed");
 
-                    TicketLog tickets = fileService.GetTicketLog();
-                    tickets.ActiveTickets.Remove(this);
-                    fileService.SaveTicketLog(tickets);
-
-                    ClosedBy = _user;
-                    ClosedAt = DateTime.Now;
+                    ticket.ClosedBy = _user.Id;
+                    ticket.ClosedAt = DateTime.Now;
 
                     DiscordChannel dmChannel = await member.CreateDmChannelAsync();
 
-                    switch (TicketComplete)
+                    switch (ticket.TicketComplete)
                     {
                         case false:
                             {
@@ -955,7 +945,7 @@
                                     messageAuthor.Roles.Contains(server.GetRole(config.TicketConfig.PveAdminRole)) ||
                                     messageAuthor.Roles.Contains(server.GetRole(config.TicketConfig.SupportRole)))
                                 {
-                                    supportMembers.Add(discordMessage.Author, $"{TranscriptUrl} - {messageAuthor.DisplayName}#{messageAuthor.Discriminator} - Add Comment Here");
+                                    supportMembers.Add(discordMessage.Author, $"{ticket.TranscriptUrl} - {messageAuthor.DisplayName}#{messageAuthor.Discriminator} - Add Comment Here");
                                 }
                             }
 
@@ -966,7 +956,7 @@
                                 DiscordMessageBuilder dmMessage = new()
                                 {
                                     Content = "Thank you for creating a ticket. We hope we were able to solve your issue! Please leave feedback in our server feedback channel. " +
-                                                                                $"We have attached the transcript to this message.\n{TranscriptUrl}\n\nIf you would like to thank the support team for their hard work then you can" +
+                                                                                $"We have attached the transcript to this message.\n{ticket.TranscriptUrl}\n\nIf you would like to thank the support team for their hard work then you can" +
                                                                                 $" donate directly to them! To do this please visit {config.TicketConfig.PaypalLink}\nTo select the support member you would like the donation to go to" +
                                                                                 $"please add one of the following to the comment of your donation:{supportDonate}\n\nAll donations are anonymous and are monitored."
                                 };
@@ -979,7 +969,7 @@
 
                     break;
 
-                case var x when x == $"{TicketId}-Close-No":
+                case var x when x == $"{ticket.TicketId}-Close-No":
                     await confirmMessage.DeleteAsync("Ticket Close Denied");
                     await channel.AddOverwriteAsync(member, Permissions.SendMessages);
                     break;

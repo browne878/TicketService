@@ -43,6 +43,22 @@
             return await QueryFirstOrDefaultAsync<TicketChannel>(sql, param);
         }
 
+        public async Task<TicketChannel> GetTicketIdAsync(int _limit = 1)
+        {
+            const string sql = "SELECT ID FROM discord_tickets ORDER BY ID DESC LIMIT @Limit";
+            var param = new { Limit = _limit };
+
+            return await QueryFirstOrDefaultAsync<TicketChannel>(sql, param);
+        }
+
+        public async Task<string> GetSteamID(ulong _discordId)
+        {
+            const string sql = "SELECT steamid FROM discord_vote_rewards WHERE discordid = @DiscordId";
+            var param = new { DiscordId = _discordId };
+
+            return await QueryFirstOrDefaultAsync<string>(sql, param);
+        }
+
         public async Task RemoveAsync(string _key)
         {
             const string sql = "DELETE FROM example_table WHERE id = @Key";
