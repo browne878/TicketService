@@ -10,6 +10,7 @@
     using Microsoft.Extensions.Hosting;
     using Ticket.Services.Services.BotService.Commands;
     using Ticket.Services.Services.BotService.Events;
+    using Ticket.Services.Services.BotService.LogicModels;
 
     public class BotService : IHostedService, IDisposable
     {

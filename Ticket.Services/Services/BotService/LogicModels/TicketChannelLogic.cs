@@ -13,42 +13,38 @@
     using DSharpPlus.Interactivity.Extensions;
     using Ticket.Core;
     using Ticket.Core.Entities;
+    using Ticket.Core.Entities.IEntities;
     using Ticket.Services.Services.BotService.Events;
 
-    public class TicketChannelLogic
+    public class TicketChannelLogic : ITicketChannelLogic
     {
         
         private readonly Config config;
         private readonly EventManager eventManager;
         private readonly InteractivityExtension interactivity;
-        private readonly DiscordUser owner;
-        private readonly DiscordGuild server;
-        private readonly DiscordChannel channel;
         private readonly IUnitOfWork unitOfWork;
-        private readonly TicketChannel ticket;
 
-        public TicketChannelLogic(DiscordUser _owner, DiscordClient _bot, DiscordGuild _server, IUnitOfWork _unitOfWork,
-        Config _config, EventManager _eventManager, TicketChannel _ticket)
+        private TicketChannel ticket;
+        private DiscordChannel channel;
+        private DiscordGuild server;
+        private DiscordUser owner;
+
+        public TicketChannelLogic(IUnitOfWork _unitOfWork, InteractivityExtension _interactivity, EventManager _eventManager, Config _config)
         {
-            owner = _owner;
-            ticket.TicketComplete = false;
-            server = _server;
             unitOfWork = _unitOfWork;
-            config = _config;
+            interactivity = _interactivity;
             eventManager = _eventManager;
-            ticket = _ticket;
-            interactivity = _bot.GetInteractivity();
-            channel = Task.WhenAll(CreateTicket()).Result[0];
+            config = _config;
         }
 
-        private async Task SetTicketId()
+        async Task ITicketChannelLogic.SetTicketId()
         {
             TicketChannel previous = await unitOfWork.TicketRepository.GetTicketIdAsync();
 
             ticket.TicketId = previous.TicketId + 1;
         }
 
-        private async Task<List<DiscordOverwriteBuilder>> SetChannelPermissions()
+        async Task<List<DiscordOverwriteBuilder>> ITicketChannelLogic.SetChannelPermissions()
         {
             List<DiscordOverwriteBuilder> permissions = new();
 
@@ -78,11 +74,11 @@
             return permissions;
         }
 
-        private async Task<DiscordChannel> CreateTicket()
+        async Task ITicketChannelLogic.CreateTicket()
         {
 
-            await SetTicketId();
-            List<DiscordOverwriteBuilder> channelPermissions = await SetChannelPermissions();
+            await ((ITicketChannelLogic)this).SetTicketId();
+            List<DiscordOverwriteBuilder> channelPermissions = await ((ITicketChannelLogic)this).SetChannelPermissions();
             ticket.TicketName = new List<string> { "ticket", $"{ticket.TicketId}" };
             DiscordChannel category = server.GetChannel(config.TicketConfig.TicketCategories.Creating);
             ticket.TicketCategory = category.Name;
@@ -133,7 +129,7 @@
             return discordChannel;
         }
 
-        private async Task<bool> GetSteamId()
+        async Task<bool> ITicketChannelLogic.GetSteamId()
         {
             ticket.SteamId = ulong.Parse(await unitOfWork.TicketRepository.GetSteamID(ticket.TicketOwner));
 
@@ -263,7 +259,7 @@
             }
         }
 
-        private async Task<bool> GetIngameIssue()
+        async Task<bool> ITicketChannelLogic.GetIngameIssue()
         {
             DiscordMessageBuilder issue = new();
 
@@ -300,7 +296,7 @@
             return true;
         }
 
-        private async Task<bool> GetCluster()
+        async Task<bool> ITicketChannelLogic.GetCluster()
         {
             DiscordMessageBuilder cluster = new();
 
@@ -344,7 +340,7 @@
             return true;
         }
 
-        private async Task<bool> GetMap()
+        async Task<bool> ITicketChannelLogic.GetMap()
         {
             DiscordMessageBuilder map = new();
 
@@ -437,7 +433,7 @@
             return true;
         }
 
-        private async Task<bool> GetCategory()
+        async Task<bool> ITicketChannelLogic.GetCategory()
         {
             DiscordMessageBuilder category = new();
 
@@ -509,7 +505,7 @@
             return true;
         }
 
-        private async Task<bool> HitlistCords()
+        async Task<bool> ITicketChannelLogic.HitlistCords()
         {
             //gets bot commands channel
             DiscordChannel commandsChannel = server.GetChannel(424672319756042240);
@@ -588,7 +584,7 @@
             }
         }
 
-        private async Task<bool> HitlistWipePrevious()
+        async Task<bool> ITicketChannelLogic.HitlistWipePrevious()
         {
             DiscordMessageBuilder wipe = new();
 
@@ -625,7 +621,7 @@
             return true;
         }
 
-        private async Task TicketCompleted()
+        async Task ITicketChannelLogic.TicketCompleted()
         {
             int ingameIssue = ticket.IngameIssue ? 1 : 0;
 
@@ -665,7 +661,7 @@
             }
         }
 
-        private async Task<string> GenerateURL()
+        async Task<string> ITicketChannelLogic.GenerateUrl()
         {
             Random random = new();
 
@@ -735,9 +731,9 @@
             return url;
         }
 
-        private async Task CreateTranscript()
+        async Task ITicketChannelLogic.CreateTranscript()
         {
-            string fileName = await GenerateURL() + "_" + channel.Name[..] + ".html";
+            string fileName = await GenerateUrl() + "_" + channel.Name[..] + ".html";
             string ticketUrl = config.TicketConfig.TicketUrl + fileName;
             string filepath = @"C:\xampp\htdocs\logs\" + fileName;
             DiscordChannel transcriptChannel = server.GetChannel(config.TicketConfig.TicketLogChannel);
