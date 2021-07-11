@@ -1,13 +1,29 @@
 namespace Ticket.Api
 {
+    using System.Threading.Tasks;
+    using DSharpPlus;
+    using DSharpPlus.SlashCommands;
     using Microsoft.AspNetCore.Hosting;
+    using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Hosting;
+    using Ticket.Services.Services.BotService.Commands;
 
-    public class Program
+    public static class Program
     {
-        public static void Main(string[] _args)
+        public static async Task Main(string[] _args)
         {
-            CreateHostBuilder(_args).Build().Run();
+            IHost host = CreateHostBuilder(_args).Build();
+
+            DiscordClient bot = host.Services.GetRequiredService<DiscordClient>();
+
+            SlashCommandsExtension slash = bot.UseSlashCommands(new SlashCommandsConfiguration
+            {
+                Services = host.Services
+            });
+
+            slash.RegisterCommands<TicketCommands>();
+
+            await host.RunAsync();
         }
 
         private static IHostBuilder CreateHostBuilder(string[] _args) =>

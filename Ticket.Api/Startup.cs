@@ -10,6 +10,7 @@ namespace Ticket.Api
     using Ticket.Data;
     using Ticket.Services.Services;
     using Ticket.Services.Services.BotService;
+    using Ticket.Services.Services.BotService.LogicModels;
 
     public class Startup
     {
@@ -25,12 +26,15 @@ namespace Ticket.Api
         {
 
             _services.AddHostedService<BotService>();
+            _services.AddHostedService<EventService>();
 
             _services.AddControllers();
 
             _services.AddSingleton(FileReaderService.GetConfig());
             _services.AddSingleton(FileReaderService.GetDiscordConfig());
             _services.AddSingleton<DiscordClient>();
+
+            _services.AddTransient<TicketController>();
 
             _services.AddScoped<IUnitOfWork, UnitOfWork>();
 

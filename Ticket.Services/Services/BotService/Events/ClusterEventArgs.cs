@@ -3,8 +3,8 @@
     using DSharpPlus.EventArgs;
     using Ticket.Core.Entities;
 
-    public class TicketCreatedEventArgs : DiscordEventArgs
+    public class ClusterEventArgs : DiscordEventArgs
     {
-        public TicketChannel Ticket { get; set; }
+        public TicketChannel TicketChannel { get; set; }
     }
 }

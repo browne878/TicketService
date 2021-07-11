@@ -3,8 +3,9 @@
     using DSharpPlus.EventArgs;
     using Ticket.Core.Entities;
 
-    public class TicketTimeoutEventArgs : DiscordEventArgs
+    public class SteamIdEventArgs : DiscordEventArgs
     {
         public TicketChannel TicketChannel { get; set; }
+        public bool Success { get; set; }
     }
 }

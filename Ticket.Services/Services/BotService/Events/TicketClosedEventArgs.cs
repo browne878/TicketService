@@ -1,9 +1,9 @@
 ﻿namespace Ticket.Services.Services.BotService.Events
 {
-    using System;
+    using DSharpPlus.EventArgs;
     using Ticket.Core.Entities;
 
-    public class TicketClosedEventArgs : EventArgs
+    public class TicketClosedEventArgs : DiscordEventArgs
     {
         public TicketChannel Ticket { get; set; }
     }
